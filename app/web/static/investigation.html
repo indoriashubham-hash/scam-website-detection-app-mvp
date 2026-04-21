@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Investigation — Website Risk Investigator</title>
+  <link rel="stylesheet" href="/ui/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap">
+      <a href="/" class="brand">
+        <span class="brand-mark"></span>
+        <span class="brand-text">Website Risk Investigator</span>
+      </a>
+      <a href="/" class="link-btn">&larr; New investigation</a>
+    </div>
+  </header>
+
+  <main class="wrap main">
+    <!-- STATUS BAR (top): shows queued/crawling spinner, final time, target URL -->
+    <section class="card status-bar" id="status-bar">
+      <div>
+        <div class="small muted">Target</div>
+        <div class="target-url" id="target-url">—</div>
+      </div>
+      <div>
+        <div class="small muted">Status</div>
+        <div id="status-text">loading…</div>
+      </div>
+      <div>
+        <div class="small muted">Completed</div>
+        <div id="completed-at">—</div>
+      </div>
+    </section>
+
+    <!-- TABS -->
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-tab="summary">Summary &amp; Deep Review <span class="tab-badge" id="deep-badge"></span></button>
+      <button class="tab" data-tab="findings">Findings</button>
+      <button class="tab" data-tab="pages">Pages</button>
+    </div>
+
+    <!-- PANEL: summary + deep review (stacked Track 1 on top, Track 2 below) -->
+    <section class="tab-panel active" id="panel-summary">
+      <!-- Track 1: deterministic verdict + LLM-translated headline/why -->
+      <div class="card">
+        <div class="verdict-head">
+          <div id="risk-chip" class="chip chip-unknown">—</div>
+          <div class="verdict-confidence">
+            <div class="small muted">Confidence</div>
+            <div id="confidence-value">—</div>
+          </div>
+        </div>
+        <h2 id="verdict-headline" class="verdict-headline">—</h2>
+        <p id="verdict-why" class="verdict-why"></p>
+        <div id="recommendation" class="recommendation hidden"></div>
+        <div class="small muted narrative-source" id="narrative-source"></div>
+      </div>
+
+      <!-- Track 2: Deep Review. Stacked directly below Track 1 so a reader
+           who wants the full story can scroll without switching tabs. -->
+      <div class="card">
+        <div class="deep-header">
+          <h2>Deep Review</h2>
+          <span class="deep-badge-inline">AI-generated evidence review — not a verdict</span>
+        </div>
+        <p class="muted small">
+          A vision-capable LLM reads the raw page text, the screenshots, and
+          every evidence row — then writes a McKinsey-style brief
+          (governing thought, 2-4 supporting pillars, contradictions, caveats).
+          Each evidence item cites the provided source it came from. This
+          complements the deterministic verdict above; it does not replace it.
+        </p>
+        <div id="deep-key-widget"></div>
+        <div id="deep-actions">
+          <button id="deep-run-btn" class="primary">Generate Deep Review</button>
+          <button id="deep-regen-btn" class="link-btn hidden">Regenerate</button>
+        </div>
+        <div id="deep-status" class="small muted"></div>
+        <div id="deep-body"></div>
+      </div>
+    </section>
+
+    <!-- PANEL: findings -->
+    <section class="tab-panel" id="panel-findings">
+      <div class="card">
+        <h2>Top findings</h2>
+        <p class="muted small">Signals the aggregator ranked as most responsible for the verdict. As more analyzers (DNS, media, news sources) are added, their findings will appear here.</p>
+        <div id="findings-list"></div>
+      </div>
+    </section>
+
+    <!-- PANEL: pages -->
+    <section class="tab-panel" id="panel-pages">
+      <div class="card">
+        <h2>Pages crawled</h2>
+        <p class="muted small">The seed URL is shown first, then the homepage compare, then anything else.</p>
+        <div id="pages-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/ui/app.js"></script>
+  <script>
+    (function () {
+      // Parse the investigation UUID from the URL path: /i/<uuid>
+      const parts = window.location.pathname.split("/").filter(Boolean);
+      const invId = parts[parts.length - 1];
+      if (!invId) {
+        document.getElementById("status-text").textContent = "missing id";
+        return;
+      }
+
+      // ---- tab switcher -------------------------------------------------
+      document.querySelectorAll(".tab").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
+          document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("active"));
+          btn.classList.add("active");
+          document.getElementById("panel-" + btn.dataset.tab).classList.add("active");
+        });
+      });
+
+      // ---- polling loop -------------------------------------------------
+      let stopPolling = false;
+      let currentStatus = null;
+
+      async function tick() {
+        try {
+          const res = await fetch(`/investigations/${invId}`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          render(data);
+          currentStatus = data.status;
+          if (data.status === "done" || data.status === "failed") {
+            stopPolling = true;
+          }
+        } catch (e) {
+          document.getElementById("status-text").textContent = "error: " + e.message;
+          stopPolling = true;
+        }
+        if (!stopPolling) setTimeout(tick, 2500);
+      }
+
+      function render(inv) {
+        // top status bar
+        document.getElementById("target-url").textContent = inv.input_url;
+        document.getElementById("status-text").innerHTML = wri.statusBadge(inv.status);
+        document.getElementById("completed-at").textContent =
+          inv.completed_at ? new Date(inv.completed_at).toLocaleString() : "—";
+
+        // verdict
+        const chip = document.getElementById("risk-chip");
+        chip.textContent = (inv.risk_band || "pending").toUpperCase();
+        chip.className = "chip " + wri.chipClass(inv.risk_band);
+        document.getElementById("confidence-value").textContent =
+          inv.confidence != null ? (Math.round(inv.confidence * 100) + "%") : "—";
+
+        const narrative = inv.narrative;
+        const headline =
+          (narrative && narrative.headline) ||
+          inv.summary ||
+          (inv.status === "done" ? "No verdict produced." : "Investigation in progress…");
+        document.getElementById("verdict-headline").textContent = headline;
+
+        const why = narrative && narrative.why ? narrative.why : "";
+        document.getElementById("verdict-why").textContent = why;
+
+        const rec = document.getElementById("recommendation");
+        if (narrative && narrative.recommendation) {
+          rec.textContent = narrative.recommendation;
+          rec.classList.remove("hidden");
+        } else {
+          rec.classList.add("hidden");
+        }
+
+        const src = document.getElementById("narrative-source");
+        if (narrative && narrative.source === "llm") {
+          src.textContent = `Translated by ${narrative.model || "LLM"} from the deterministic verdict.`;
+        } else if (inv.summary && inv.status === "done") {
+          src.textContent = "Deterministic template (LLM unavailable).";
+        } else {
+          src.textContent = "";
+        }
+
+        // findings
+        wri.renderFindings(inv.findings || [], document.getElementById("findings-list"));
+
+        // pages
+        wri.renderPages(inv.pages || [], document.getElementById("pages-list"));
+      }
+
+      tick();
+
+      // ---- deep review handlers ----------------------------------------
+      const deepRunBtn = document.getElementById("deep-run-btn");
+      const deepRegenBtn = document.getElementById("deep-regen-btn");
+      const deepStatus = document.getElementById("deep-status");
+      const deepBody = document.getElementById("deep-body");
+      const deepBadge = document.getElementById("deep-badge");
+
+      // Mount the BYOK widget above the Generate button so users can paste a
+      // key on this page as well (e.g., if they landed directly on a shared
+      // investigation URL without visiting the home page first).
+      wri.renderKeyWidget(document.getElementById("deep-key-widget"));
+
+      async function loadCachedDeepReview() {
+        try {
+          const res = await fetch(`/investigations/${invId}/deep-review`);
+          if (res.ok) {
+            const data = await res.json();
+            showDeepReview(data.deep_review);
+            deepRunBtn.classList.add("hidden");
+            deepRegenBtn.classList.remove("hidden");
+            deepBadge.textContent = "✓";
+            deepBadge.className = "tab-badge badge-ok";
+          }
+        } catch (_) { /* no cached review */ }
+      }
+
+      async function runDeepReview(force) {
+        if (currentStatus !== "done") {
+          deepStatus.textContent = "Wait for the crawl to finish first.";
+          return;
+        }
+        deepRunBtn.disabled = true;
+        deepRegenBtn.disabled = true;
+        deepStatus.textContent = "Running — this can take 15-30 seconds…";
+        deepBody.innerHTML = "";
+        try {
+          const url = `/investigations/${invId}/deep-review${force ? "?force=true" : ""}`;
+          const body = {};
+          const key = wri.getApiKey();
+          if (key) body.anthropic_api_key = key;
+          const res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.detail || `HTTP ${res.status}`);
+          }
+          const data = await res.json();
+          showDeepReview(data.deep_review);
+          deepRunBtn.classList.add("hidden");
+          deepRegenBtn.classList.remove("hidden");
+          deepBadge.textContent = "✓";
+          deepBadge.className = "tab-badge badge-ok";
+          deepStatus.textContent = data.cached ? "Loaded from cache." : "Generated just now.";
+        } catch (e) {
+          deepStatus.textContent = "Error: " + e.message;
+        } finally {
+          deepRunBtn.disabled = false;
+          deepRegenBtn.disabled = false;
+        }
+      }
+
+      function showDeepReview(dr) {
+        deepBody.innerHTML = "";
+        deepBody.appendChild(wri.renderDeepReview(dr));
+      }
+
+      deepRunBtn.addEventListener("click", () => runDeepReview(false));
+      deepRegenBtn.addEventListener("click", () => runDeepReview(true));
+      loadCachedDeepReview();
+    })();
+  </script>
+</body>
+</html>

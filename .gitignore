@@ -1,0 +1,67 @@
+# -------------------------------------------------------------------
+# Secrets — never commit these. Real env files live only on disk.
+# -------------------------------------------------------------------
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# -------------------------------------------------------------------
+# Python
+# -------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+wheels/
+.installed.cfg
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Test / coverage artifacts
+.pytest_cache/
+pytest-cache-files-*/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# -------------------------------------------------------------------
+# Node (only if a future build step adds one)
+# -------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# -------------------------------------------------------------------
+# Docker / runtime volumes — the dev stack mounts local volumes for
+# Postgres/Redis/MinIO; do not check those binary blobs in.
+# -------------------------------------------------------------------
+.data/
+postgres_data/
+redis_data/
+minio_data/
+playwright-cache/
+
+# -------------------------------------------------------------------
+# IDE / editor cruft
+# -------------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

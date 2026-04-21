@@ -1,0 +1,109 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: wri
+      POSTGRES_PASSWORD: wri
+      POSTGRES_DB: wri
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wri -d wri"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: wri
+      MINIO_ROOT_PASSWORD: wri-secret
+    ports: ["9000:9000", "9001:9001"]
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 wri wri-secret &&
+        mc mb -p local/wri-evidence || true &&
+        mc anonymous set download local/wri-evidence || true
+      "
+
+  api:
+    build: .
+    command: uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --reload
+    # Auto-restart on Docker Desktop / WSL hiccups so a queued investigation
+    # is never silently abandoned.
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://wri:wri@postgres:5432/wri
+      - REDIS_URL=redis://redis:6379/0
+      - S3_ENDPOINT=http://minio:9000
+      - S3_ACCESS_KEY=wri
+      - S3_SECRET_KEY=wri-secret
+      - S3_BUCKET=wri-evidence
+      - S3_PUBLIC_BASE=http://localhost:9000/wri-evidence
+      # LLM keys — pulled from the host env so secrets don't land in compose.
+      # Both reporter tracks degrade gracefully if unset.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - REPORTER_MODEL=${REPORTER_MODEL:-claude-sonnet-4-6}
+      - DEEP_REVIEW_MODEL=${DEEP_REVIEW_MODEL:-claude-sonnet-4-6}
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis:    {condition: service_healthy}
+      minio:    {condition: service_healthy}
+    ports: ["8000:8000"]
+    volumes: ["./:/app"]
+
+  worker:
+    build: .
+    command: python -m app.worker.main
+    mem_limit: 3g          # explicit ceiling; Docker Desktop defaults vary
+    shm_size: "1gb"        # already there
+    # Worker is the long-running consumer; without restart it can silently
+    # die after a job and leave the queue stuck. Don't ship without this.
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://wri:wri@postgres:5432/wri
+      - REDIS_URL=redis://redis:6379/0
+      - S3_ENDPOINT=http://minio:9000
+      - S3_ACCESS_KEY=wri
+      - S3_SECRET_KEY=wri-secret
+      - S3_BUCKET=wri-evidence
+      - S3_PUBLIC_BASE=http://localhost:9000/wri-evidence
+      - PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+      # Worker uses Track 1 (translator) inline after the crawl; same key.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - REPORTER_MODEL=${REPORTER_MODEL:-claude-sonnet-4-6}
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis:    {condition: service_healthy}
+      minio:    {condition: service_healthy}
+    volumes:
+      - "./:/app"
+
+volumes:
+  pgdata:
+  miniodata:

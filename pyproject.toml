@@ -1,0 +1,61 @@
+[project]
+name = "website-risk-investigator"
+version = "0.1.0"
+description = "Evidence-driven website risk investigation engine"
+requires-python = ">=3.11"
+dependencies = [
+  # web + api
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "pydantic>=2.8",
+  "pydantic-settings>=2.4",
+  # db
+  "sqlalchemy[asyncio]>=2.0",
+  "asyncpg>=0.29",
+  "alembic>=1.13",
+  # queue
+  "rq>=1.16",
+  "redis>=5.0",
+  # http + crawling
+  "httpx[http2]>=0.27",
+  "tldextract>=5.1",
+  "beautifulsoup4>=4.12",
+  "lxml>=5.2",
+  "trafilatura>=1.12",
+  "readability-lxml>=0.8.1",
+  "playwright>=1.46",
+  "protego>=0.3.0",          # robots.txt parser
+  "ultimate-sitemap-parser>=0.5",
+  # analysis helpers (extractors)
+  "phonenumbers>=8.13",
+  "langdetect>=1.0.9",
+  "simhash>=2.1.2",
+  "Pillow>=10.4",
+  # object store
+  "boto3>=1.35",
+  # infra bits
+  "structlog>=24.4",
+  "orjson>=3.10",
+  # LLM (optional at runtime — reporter degrades gracefully if not installed
+  # or if ANTHROPIC_API_KEY is unset; declared here so docker builds include it)
+  "anthropic>=0.39",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.6",
+  "mypy>=1.11",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E","F","I","B","UP","SIM","RUF"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

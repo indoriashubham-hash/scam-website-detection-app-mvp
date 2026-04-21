@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Website Risk Investigator</title>
+  <link rel="stylesheet" href="/ui/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap">
+      <a href="/" class="brand">
+        <span class="brand-mark"></span>
+        <span class="brand-text">Website Risk Investigator</span>
+      </a>
+      <span class="brand-sub">Evidence-driven scam-site reviews</span>
+    </div>
+  </header>
+
+  <main class="wrap main">
+    <section class="card card-form">
+      <h1>Investigate a website</h1>
+      <p class="muted">
+        Paste any URL below. The crawler will collect evidence, a deterministic
+        rule engine will issue a verdict, and an LLM translator will explain
+        the result in plain English.
+      </p>
+      <div id="key-widget-host"></div>
+      <form id="investigate-form">
+        <input
+          id="url-input"
+          type="url"
+          name="url"
+          required
+          placeholder="https://example.com/suspicious-page"
+          autocomplete="off"
+        >
+        <button type="submit" id="submit-btn">Investigate</button>
+      </form>
+      <p id="form-error" class="error hidden"></p>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>Recent investigations</h2>
+        <button id="refresh-btn" class="link-btn">Refresh</button>
+      </div>
+      <div id="recent-list" class="recent-list">
+        <p class="muted small">Loading…</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="wrap footer muted small">
+    Local deployment — results persist in this Postgres instance only.
+  </footer>
+
+  <script src="/ui/app.js"></script>
+  <script>
+    // Home-page wiring. Keep all the shared helpers in app.js; the page-
+    // specific glue lives here.
+    (function () {
+      const form = document.getElementById("investigate-form");
+      const input = document.getElementById("url-input");
+      const submit = document.getElementById("submit-btn");
+      const errEl = document.getElementById("form-error");
+      const list = document.getElementById("recent-list");
+      const refreshBtn = document.getElementById("refresh-btn");
+
+      // Mount the BYOK widget. Users paste their Anthropic key here; it's
+      // persisted in localStorage and sent with the POST body below.
+      wri.renderKeyWidget(document.getElementById("key-widget-host"));
+
+      form.addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        errEl.classList.add("hidden");
+        const url = input.value.trim();
+        if (!url) return;
+        submit.disabled = true;
+        submit.textContent = "Submitting…";
+        try {
+          const body = { url };
+          const key = wri.getApiKey();
+          if (key) body.anthropic_api_key = key;
+          const res = await fetch("/investigations", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.detail || `HTTP ${res.status}`);
+          }
+          const data = await res.json();
+          window.location.href = `/i/${data.id}`;
+        } catch (e) {
+          errEl.textContent = String(e.message || e);
+          errEl.classList.remove("hidden");
+          submit.disabled = false;
+          submit.textContent = "Investigate";
+        }
+      });
+
+      async function loadRecent() {
+        list.innerHTML = '<p class="muted small">Loading…</p>';
+        try {
+          const res = await fetch("/investigations?limit=20");
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const rows = await res.json();
+          if (!rows.length) {
+            list.innerHTML = '<p class="muted small">No investigations yet.</p>';
+            return;
+          }
+          list.innerHTML = "";
+          for (const r of rows) list.appendChild(wri.recentCard(r));
+        } catch (e) {
+          list.innerHTML = `<p class="error small">Failed to load: ${e.message}</p>`;
+        }
+      }
+      refreshBtn.addEventListener("click", loadRecent);
+      loadRecent();
+    })();
+  </script>
+</body>
+</html>
